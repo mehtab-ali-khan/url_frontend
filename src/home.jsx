@@ -12,7 +12,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 
-const URLS_ENDPOINT = '/api/urls/'
+const API = import.meta.env.VITE_API_URL;
 
 export default function Home() {
   const [url, setUrl] = useState('')
@@ -32,7 +32,7 @@ export default function Home() {
 
   const fetchUrls = async () => {
     try {
-      const response = await fetch(URLS_ENDPOINT)
+      const response = await fetch(`${API}/api/urls`)
       if (!response.ok) {
         throw new Error('Failed to load URLs.')
       }
@@ -52,7 +52,7 @@ export default function Home() {
     setLoading(true)
 
     try {
-      const response = await fetch(URLS_ENDPOINT, {
+      const response = await fetch(`${API}/api/urls`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
