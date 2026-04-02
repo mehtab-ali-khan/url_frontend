@@ -23,7 +23,17 @@ function StatusBadge({ code }) {
     </span>
   )
 }
-
+function SkeletonRow() {
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200">
+      <div className="flex-1 space-y-2">
+        <div className="h-3 w-[55%] bg-slate-100 rounded animate-pulse" />
+        <div className="h-2.5 w-[25%] bg-slate-100 rounded animate-pulse" />
+      </div>
+      <div className="h-3 w-[10%] bg-slate-100 rounded animate-pulse" />
+    </div>
+  )
+}
 export default function Home() {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -32,6 +42,9 @@ export default function Home() {
   const [toast, setToast] = useState(null)
   const [countdown, setCountdown] = useState(60)
   const countdownRef = useRef(60)
+  const [urlsLoading, setUrlsLoading] = useState(true)
+  const [pingsLoading, setPingsLoading] = useState(true)
+  const isLoading = urlsLoading || pingsLoading
 
   const showToast = (type, message) => {
     setToast({ type, message })
@@ -47,6 +60,8 @@ export default function Home() {
       setUrls(Array.isArray(data) ? data : [])
     } catch {
       showToast('error', 'Failed to load URLs.')
+    } finally {
+      setUrlsLoading(false)
     }
   }, [])
 
@@ -59,6 +74,9 @@ export default function Home() {
       data.forEach(p => { map[p.url] = p })
       setPings(map)
     } catch { }
+    finally {
+      setPingsLoading(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -157,7 +175,7 @@ export default function Home() {
           <label className="block text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-3">
             Add Website URL
           </label>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               value={url}
               onChange={e => setUrl(e.target.value)}
@@ -168,7 +186,7 @@ export default function Home() {
             <button
               onClick={handleAdd}
               disabled={loading}
-              className="px-5 py-2.5 bg-slate-900 hover:bg-slate-700 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-all active:scale-95 whitespace-nowrap"
+              className="w-full sm:w-auto px-5 py-2.5 bg-slate-900 hover:bg-slate-700 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-all active:scale-95 whitespace-nowrap"
             >
               {loading ? 'Adding...' : 'Add URL'}
             </button>
@@ -191,7 +209,11 @@ export default function Home() {
             </span>
           </div>
 
-          {urls.length === 0 ? (
+          {isLoading ? (
+            <div className="space-y-2">
+              {[...Array(3)].map((_, i) => <SkeletonRow key={i} />)}
+            </div>
+          ) : urls.length === 0 ? (
             <div className="text-center py-16 bg-white border border-dashed border-slate-200 rounded-2xl">
               <p className="text-slate-400 text-sm">No URLs monitored yet.</p>
               <p className="text-slate-300 text-xs mt-1 font-mono">Add one above to get started.</p>
@@ -201,27 +223,23 @@ export default function Home() {
               {urls.map(u => {
                 const ping = pings[u.id]
                 const hasError = ping && !isSuccess(ping.status_code)
-
                 return (
                   <div
                     key={u.id}
                     className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
                   >
-                    {/* URL + time */}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-800 truncate">{u.url}</p>
                       <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                         {ping ? `checked ${timeAgo(ping.time)}` : `added ${timeAgo(u.created_at)}`}
                       </p>
                     </div>
-
-                    {/* Status code + view error */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 shrink-0">
                       <StatusBadge code={ping?.status_code} />
                       {hasError && ping.has_snapshot && (
                         <button
                           onClick={() => handleViewError(ping.id)}
-                          className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors"
+                          className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors whitespace-nowrap"
                         >
                           View Error
                         </button>
