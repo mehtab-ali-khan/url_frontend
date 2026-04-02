@@ -16,13 +16,13 @@ function StatusBadge({ code }) {
   if (!code) return (
     <span className="text-[11px] font-mono text-slate-400">—</span>
   )
-
   return (
     <span className={`text-[11px] font-mono font-semibold ${isSuccess(code) ? 'text-emerald-600' : 'text-red-500'}`}>
       {code}
     </span>
   )
 }
+
 function SkeletonRow() {
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200">
@@ -34,6 +34,45 @@ function SkeletonRow() {
     </div>
   )
 }
+
+function ErrorModal({ url, pingUrl, onClose }) {
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose() }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', handler)
+    return () => {
+      document.body.style.overflow = ''
+      window.removeEventListener('keydown', handler)
+    }
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-white">
+      <div className="flex items-center justify-between px-5 py-3 bg-slate-900 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-xs font-mono text-red-400 font-semibold shrink-0">
+            ERROR SNAPSHOT
+          </span>
+          <span className="text-xs font-mono text-slate-400 truncate">
+            {pingUrl}
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-slate-400 hover:text-white text-xs font-mono transition-colors shrink-0 ml-4"
+        >
+          ESC · Close
+        </button>
+      </div>
+      <iframe
+        src={url}
+        className="flex-1 w-full border-0 bg-white"
+        title="Error Snapshot"
+      />
+    </div>
+  )
+}
+
 export default function Home() {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -41,9 +80,11 @@ export default function Home() {
   const [pings, setPings] = useState({})
   const [toast, setToast] = useState(null)
   const [countdown, setCountdown] = useState(60)
-  const countdownRef = useRef(60)
   const [urlsLoading, setUrlsLoading] = useState(true)
   const [pingsLoading, setPingsLoading] = useState(true)
+  const [modal, setModal] = useState(null)
+
+  const countdownRef = useRef(60)
   const isLoading = urlsLoading || pingsLoading
 
   const showToast = (type, message) => {
@@ -120,12 +161,12 @@ export default function Home() {
     }
   }
 
-  const handleViewError = async (pingId) => {
+  const handleViewError = async (pingId, pingUrl) => {
     try {
       const res = await fetch(`${API}/api/pings/${pingId}/snapshot/`)
       if (!res.ok) throw new Error()
       const data = await res.json()
-      window.open(data.snapshot_url, '_blank')
+      setModal({ url: data.snapshot_url, pingUrl })
     } catch {
       showToast('error', 'Snapshot not available.')
     }
@@ -136,6 +177,14 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+
+      {modal && (
+        <ErrorModal
+          url={modal.url}
+          pingUrl={modal.pingUrl}
+          onClose={() => setModal(null)}
+        />
+      )}
 
       {/* Navbar */}
       <header className="bg-white border-b border-slate-200 px-6 py-4">
@@ -155,7 +204,7 @@ export default function Home() {
       <div className="max-w-2xl mx-auto px-5 py-10">
 
         {/* Stats */}
-        {urls.length > 0 && (
+        {!isLoading && urls.length > 0 && (
           <div className="grid grid-cols-3 gap-3 mb-8">
             {[
               { label: 'Total', value: urls.length, color: 'text-slate-900' },
@@ -238,7 +287,7 @@ export default function Home() {
                       <StatusBadge code={ping?.status_code} />
                       {hasError && ping.has_snapshot && (
                         <button
-                          onClick={() => handleViewError(ping.id)}
+                          onClick={() => handleViewError(ping.id, u.url)}
                           className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors whitespace-nowrap"
                         >
                           View Error
@@ -251,7 +300,6 @@ export default function Home() {
             </div>
           )}
         </div>
-
       </div>
     </div>
   )
