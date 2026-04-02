@@ -2,19 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 
 const API = import.meta.env.VITE_API_URL
 
-const getStatus = (code) => {
-  if (!code) return 'pending'
-  if (code >= 200 && code < 300) return 'up'
-  if (code === 403 || code === 401) return 'restricted'
-  return 'down'
-}
-
-const STATUS = {
-  up: { label: 'UP', dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' },
-  restricted: { label: 'RESTRICTED', dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' },
-  down: { label: 'DOWN', dot: 'bg-red-500', text: 'text-red-700', bg: 'bg-red-50', border: 'border-red-200' },
-  pending: { label: 'PENDING', dot: 'bg-slate-300', text: 'text-slate-500', bg: 'bg-slate-50', border: 'border-slate-200' },
-}
+const isSuccess = (code) => code >= 200 && code < 300
 
 const timeAgo = (value) => {
   const s = Math.floor((Date.now() - new Date(value)) / 1000)
@@ -24,13 +12,14 @@ const timeAgo = (value) => {
   return `${Math.floor(s / 86400)}d ago`
 }
 
-function StatusPill({ code }) {
-  const status = getStatus(code)
-  const cfg = STATUS[status]
+function StatusBadge({ code }) {
+  if (!code) return (
+    <span className="text-[11px] font-mono text-slate-400">—</span>
+  )
+
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold tracking-wider px-2.5 py-1 rounded-md border ${cfg.text} ${cfg.bg} ${cfg.border}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} ${status === 'up' ? 'animate-pulse' : ''}`} />
-      {code ?? '—'} · {cfg.label}
+    <span className={`text-[11px] font-mono font-semibold ${isSuccess(code) ? 'text-emerald-600' : 'text-red-500'}`}>
+      {code}
     </span>
   )
 }
@@ -42,7 +31,6 @@ export default function Home() {
   const [pings, setPings] = useState({})
   const [toast, setToast] = useState(null)
   const [countdown, setCountdown] = useState(60)
-  // use ref so countdown interval doesn't cause re-renders that reset it
   const countdownRef = useRef(60)
 
   const showToast = (type, message) => {
@@ -68,33 +56,28 @@ export default function Home() {
       if (!res.ok) throw new Error()
       const data = await res.json()
       const map = {}
-      data.forEach(p => {
-        map[p.url] = p
-      })
+      data.forEach(p => { map[p.url] = p })
       setPings(map)
     } catch { }
   }, [])
 
-  // initial load
   useEffect(() => {
     fetchUrls()
     fetchPings()
   }, [])
 
-  // countdown timer — never resets unless component unmounts
   useEffect(() => {
     const id = setInterval(() => {
       countdownRef.current -= 1
       setCountdown(countdownRef.current)
-
       if (countdownRef.current <= 0) {
         countdownRef.current = 60
         setCountdown(60)
-        fetchPings()  // fetch new pings when countdown hits 0
+        fetchPings()
       }
     }, 1000)
     return () => clearInterval(id)
-  }, []) // ← empty deps, runs once only
+  }, [])
 
   const handleAdd = async () => {
     if (!url.trim()) return
@@ -119,8 +102,19 @@ export default function Home() {
     }
   }
 
-  const upCount = urls.filter(u => getStatus(pings[u.id]?.status_code) === 'up').length
-  const downCount = urls.filter(u => getStatus(pings[u.id]?.status_code) === 'down').length
+  const handleViewError = async (pingId) => {
+    try {
+      const res = await fetch(`${API}/api/pings/${pingId}/snapshot/`)
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      window.open(data.snapshot_url, '_blank')
+    } catch {
+      showToast('error', 'Snapshot not available.')
+    }
+  }
+
+  const upCount = urls.filter(u => isSuccess(pings[u.id]?.status_code)).length
+  const downCount = urls.filter(u => pings[u.id] && !isSuccess(pings[u.id]?.status_code)).length
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -144,12 +138,11 @@ export default function Home() {
 
         {/* Stats */}
         {urls.length > 0 && (
-          <div className="grid grid-cols-4 gap-3 mb-8">
+          <div className="grid grid-cols-3 gap-3 mb-8">
             {[
               { label: 'Total', value: urls.length, color: 'text-slate-900' },
               { label: 'Up', value: upCount, color: 'text-emerald-600' },
               { label: 'Down', value: downCount, color: 'text-red-500' },
-              { label: 'Pending', value: urls.length - upCount - downCount, color: 'text-slate-400' },
             ].map(stat => (
               <div key={stat.label} className="bg-white rounded-xl border border-slate-200 px-4 py-3.5">
                 <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
@@ -207,18 +200,33 @@ export default function Home() {
             <div className="space-y-2">
               {urls.map(u => {
                 const ping = pings[u.id]
+                const hasError = ping && !isSuccess(ping.status_code)
+
                 return (
                   <div
                     key={u.id}
                     className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
                   >
+                    {/* URL + time */}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-800 truncate">{u.url}</p>
                       <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                         {ping ? `checked ${timeAgo(ping.time)}` : `added ${timeAgo(u.created_at)}`}
                       </p>
                     </div>
-                    <StatusPill code={ping?.status_code} />
+
+                    {/* Status code + view error */}
+                    <div className="flex items-center gap-3">
+                      <StatusBadge code={ping?.status_code} />
+                      {hasError && ping.has_snapshot && (
+                        <button
+                          onClick={() => handleViewError(ping.id)}
+                          className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors"
+                        >
+                          View Error
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}
