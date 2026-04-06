@@ -35,7 +35,7 @@ function SkeletonRow() {
   )
 }
 
-function ErrorModal({ url, pingUrl, onClose }) {
+function ErrorModal({ snapshotUrl, pingUrl, onClose }) {
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
     document.body.style.overflow = 'hidden'
@@ -65,7 +65,7 @@ function ErrorModal({ url, pingUrl, onClose }) {
         </button>
       </div>
       <iframe
-        src={url}
+        src={snapshotUrl}
         className="flex-1 w-full border-0 bg-white"
         title="Error Snapshot"
       />
@@ -108,11 +108,11 @@ export default function Home() {
 
   const fetchPings = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/url-checks/`)
+      const res = await fetch(`${API}/api/url-pings/`)  // ← updated endpoint
       if (!res.ok) throw new Error()
       const data = await res.json()
       const map = {}
-      data.forEach(p => { map[p.url] = p })
+      data.forEach(p => { map[p.url_string] = p })  // ← map by url_string
       setPings(map)
     } catch { }
     finally {
@@ -163,24 +163,27 @@ export default function Home() {
 
   const handleViewError = async (pingId, pingUrl) => {
     try {
-      const res = await fetch(`${API}/api/pings/${pingId}/snapshot/`)
+      const res = await fetch(`${API}/api/url-ping/${pingId}/error/`)  // ← updated endpoint
       if (!res.ok) throw new Error()
       const data = await res.json()
-      setModal({ url: data.snapshot_url, pingUrl })
+      setModal({ snapshotUrl: data.snapshot_url, pingUrl })
     } catch {
       showToast('error', 'Snapshot not available.')
     }
   }
 
-  const upCount = urls.filter(u => isSuccess(pings[u.id]?.status_code)).length
-  const downCount = urls.filter(u => pings[u.id] && !isSuccess(pings[u.id]?.status_code)).length
+  // match ping by url string
+  const getPing = (u) => pings[u.url]
+
+  const upCount = urls.filter(u => isSuccess(getPing(u)?.status_code)).length
+  const downCount = urls.filter(u => getPing(u) && !isSuccess(getPing(u)?.status_code)).length
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
 
       {modal && (
         <ErrorModal
-          url={modal.url}
+          snapshotUrl={modal.snapshotUrl}
           pingUrl={modal.pingUrl}
           onClose={() => setModal(null)}
         />
@@ -270,7 +273,7 @@ export default function Home() {
           ) : (
             <div className="space-y-2">
               {urls.map(u => {
-                const ping = pings[u.id]
+                const ping = getPing(u)
                 const hasError = ping && !isSuccess(ping.status_code)
                 return (
                   <div
@@ -285,7 +288,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <StatusBadge code={ping?.status_code} />
-                      {hasError && ping.has_snapshot && (
+                      {hasError && ping.has_error && (
                         <button
                           onClick={() => handleViewError(ping.id, u.url)}
                           className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors whitespace-nowrap"
