@@ -13,7 +13,7 @@ const timeAgo = (value) => {
 }
 
 function StatusBadge({ code }) {
-  if (!code) return (
+  if (code === undefined || code === null) return (
     <span className="text-[11px] font-mono text-slate-400">—</span>
   )
   return (
@@ -76,16 +76,14 @@ function ErrorModal({ snapshotUrl, pingUrl, onClose }) {
 export default function Home() {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
-  const [urls, setUrls] = useState([])
-  const [pings, setPings] = useState({})
+  const [pings, setPings] = useState([])
+  const [pendingUrls, setPendingUrls] = useState([]) // newly added, not yet pinged
   const [toast, setToast] = useState(null)
   const [countdown, setCountdown] = useState(60)
-  const [urlsLoading, setUrlsLoading] = useState(true)
   const [pingsLoading, setPingsLoading] = useState(true)
   const [modal, setModal] = useState(null)
 
   const countdownRef = useRef(60)
-  const isLoading = urlsLoading || pingsLoading
 
   const showToast = (type, message) => {
     setToast({ type, message })
@@ -93,27 +91,17 @@ export default function Home() {
     showToast._t = setTimeout(() => setToast(null), 3500)
   }
 
-  const fetchUrls = useCallback(async () => {
-    try {
-      const res = await fetch(`${API}/api/urls/`)
-      if (!res.ok) throw new Error()
-      const data = await res.json()
-      setUrls(Array.isArray(data) ? data : [])
-    } catch {
-      showToast('error', 'Failed to load URLs.')
-    } finally {
-      setUrlsLoading(false)
-    }
-  }, [])
-
   const fetchPings = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/url-pings/`)  // ← updated endpoint
+      const res = await fetch(`${API}/api/url-pings/`)
       if (!res.ok) throw new Error()
       const data = await res.json()
-      const map = {}
-      data.forEach(p => { map[p.url_string] = p })  // ← map by url_string
-      setPings(map)
+      setPings(Array.isArray(data) ? data : [])
+
+      // remove pending urls that now have pings
+      setPendingUrls(prev =>
+        prev.filter(u => !data.some(p => p.url_string === u.url))
+      )
     } catch { }
     finally {
       setPingsLoading(false)
@@ -121,7 +109,6 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    fetchUrls()
     fetchPings()
   }, [])
 
@@ -142,7 +129,7 @@ export default function Home() {
     if (!url.trim()) return
     setLoading(true)
     try {
-      const res = await fetch(`${API}/api/urls/`, {
+      const res = await fetch(`${API}/api/url-create/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url.trim() }),
@@ -151,9 +138,11 @@ export default function Home() {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.url?.[0] || 'Failed to save URL.')
       }
+      const newUrl = await res.json()
       setUrl('')
-      showToast('success', 'URL added successfully.')
-      await fetchUrls()
+      showToast('success', 'URL added. Will be checked in next cycle.')
+      // add to pending urls immediately so user sees it
+      setPendingUrls(prev => [newUrl, ...prev])
     } catch (e) {
       showToast('error', e.message)
     } finally {
@@ -163,7 +152,7 @@ export default function Home() {
 
   const handleViewError = async (pingId, pingUrl) => {
     try {
-      const res = await fetch(`${API}/api/url-ping/${pingId}/error/`)  // ← updated endpoint
+      const res = await fetch(`${API}/api/url-ping/${pingId}/error/`)
       if (!res.ok) throw new Error()
       const data = await res.json()
       setModal({ snapshotUrl: data.snapshot_url, pingUrl })
@@ -172,11 +161,9 @@ export default function Home() {
     }
   }
 
-  // match ping by url string
-  const getPing = (u) => pings[u.url]
-
-  const upCount = urls.filter(u => isSuccess(getPing(u)?.status_code)).length
-  const downCount = urls.filter(u => getPing(u) && !isSuccess(getPing(u)?.status_code)).length
+  const upCount = pings.filter(p => isSuccess(p.status_code)).length
+  const downCount = pings.filter(p => !isSuccess(p.status_code)).length
+  const totalCount = pings.length + pendingUrls.length
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -207,10 +194,10 @@ export default function Home() {
       <div className="max-w-2xl mx-auto px-5 py-10">
 
         {/* Stats */}
-        {!isLoading && urls.length > 0 && (
+        {!pingsLoading && totalCount > 0 && (
           <div className="grid grid-cols-3 gap-3 mb-8">
             {[
-              { label: 'Total', value: urls.length, color: 'text-slate-900' },
+              { label: 'Total', value: totalCount, color: 'text-slate-900' },
               { label: 'Up', value: upCount, color: 'text-emerald-600' },
               { label: 'Down', value: downCount, color: 'text-red-500' },
             ].map(stat => (
@@ -257,49 +244,63 @@ export default function Home() {
               Monitored URLs
             </p>
             <span className="text-[11px] font-mono text-slate-400 bg-white border border-slate-200 px-2.5 py-1 rounded-full">
-              {urls.length} url{urls.length !== 1 ? 's' : ''}
+              {totalCount} url{totalCount !== 1 ? 's' : ''}
             </span>
           </div>
 
-          {isLoading ? (
+          {pingsLoading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => <SkeletonRow key={i} />)}
             </div>
-          ) : urls.length === 0 ? (
+          ) : totalCount === 0 ? (
             <div className="text-center py-16 bg-white border border-dashed border-slate-200 rounded-2xl">
               <p className="text-slate-400 text-sm">No URLs monitored yet.</p>
               <p className="text-slate-300 text-xs mt-1 font-mono">Add one above to get started.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {urls.map(u => {
-                const ping = getPing(u)
-                const hasError = ping && !isSuccess(ping.status_code)
-                return (
-                  <div
-                    key={u.id}
-                    className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 truncate">{u.url}</p>
-                      <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                        {ping ? `checked ${timeAgo(ping.time)}` : `added ${timeAgo(u.created_at)}`}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <StatusBadge code={ping?.status_code} />
-                      {hasError && ping.has_error && (
-                        <button
-                          onClick={() => handleViewError(ping.id, u.url)}
-                          className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors whitespace-nowrap"
-                        >
-                          View Error
-                        </button>
-                      )}
-                    </div>
+
+              {/* pending urls - not yet pinged */}
+              {pendingUrls.map(u => (
+                <div
+                  key={`pending-${u.id}`}
+                  className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{u.url}</p>
+                    <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                      added {timeAgo(u.created_at)} · waiting for first check
+                    </p>
                   </div>
-                )
-              })}
+                  <span className="text-[11px] font-mono text-slate-400">—</span>
+                </div>
+              ))}
+
+              {/* pinged urls */}
+              {pings.map(ping => (
+                <div
+                  key={ping.id}
+                  className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{ping.url_string}</p>
+                    <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                      checked {timeAgo(ping.time)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <StatusBadge code={ping.status_code} />
+                    {!isSuccess(ping.status_code) && ping.has_error && (
+                      <button
+                        onClick={() => handleViewError(ping.id, ping.url_string)}
+                        className="text-[11px] font-mono text-slate-500 hover:text-red-500 underline underline-offset-2 transition-colors whitespace-nowrap"
+                      >
+                        View Error
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
