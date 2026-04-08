@@ -183,7 +183,7 @@ export default function Home() {
             <div className="w-6 h-6 rounded-md bg-slate-900 flex items-center justify-center">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             </div>
-            <span className="text-sm font-semibold text-slate-900 tracking-tight">PulseCheck</span>
+            <span className="text-sm font-semibold text-slate-900 tracking-tight">ServerMonitor</span>
           </div>
           <span className="text-[11px] font-mono text-slate-400">
             next check in {countdown}s
