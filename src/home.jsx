@@ -124,9 +124,7 @@ export default function Home() {
     finally { setLoadingMore(false) }
   }, [nextPage, loadingMore])
 
-  // ─── Silent refresh every 60s — MERGE, don't replace ──────────────────────
-  // Only updates status of existing visible items + prepends brand new ones.
-  // This preserves your infinite scroll pages.
+
   const silentRefresh = useCallback(async () => {
     try {
       const loadedCount = pingsRef.current.length
@@ -140,14 +138,22 @@ export default function Home() {
       setPings(prev => {
         const freshMap = new Map(fresh.map(f => [f.url_string, f]))
 
-        // Update all visible items with latest data
         const updated = prev.map(ping => freshMap.get(ping.url_string) ?? ping)
 
-        // Prepend brand new URLs not yet in list
         const existingUrls = new Set(prev.map(p => p.url_string))
         const brandNew = fresh.filter(f => !existingUrls.has(f.url_string))
 
-        return [...brandNew, ...updated]
+        const merged = [...brandNew, ...updated]
+
+        const seen = new Set()
+        const deduped = merged.filter(p => {
+          if (seen.has(p.id)) return false
+          seen.add(p.id)
+          return true
+        })
+
+        pingsRef.current = deduped
+        return deduped
       })
 
       setPendingUrls(prev =>
