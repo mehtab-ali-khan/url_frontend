@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 
 const API = import.meta.env.VITE_API_URL
+const PAGE_SIZE = 10
 
 const isSuccess = (code) => code >= 200 && code < 300
 
@@ -13,9 +14,8 @@ const timeAgo = (value) => {
 }
 
 function StatusBadge({ code }) {
-  if (code === undefined || code === null) return (
-    <span className="text-[11px] font-mono text-slate-400">—</span>
-  )
+  if (code === undefined || code === null)
+    return <span className="text-[11px] font-mono text-slate-400">—</span>
   return (
     <span className={`text-[11px] font-mono font-semibold ${isSuccess(code) ? 'text-emerald-600' : 'text-red-500'}`}>
       {code}
@@ -50,25 +50,14 @@ function ErrorModal({ snapshotUrl, pingUrl, onClose }) {
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
       <div className="flex items-center justify-between px-5 py-3 bg-slate-900 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-xs font-mono text-red-400 font-semibold shrink-0">
-            ERROR SNAPSHOT
-          </span>
-          <span className="text-xs font-mono text-slate-400 truncate">
-            {pingUrl}
-          </span>
+          <span className="text-xs font-mono text-red-400 font-semibold shrink-0">ERROR SNAPSHOT</span>
+          <span className="text-xs font-mono text-slate-400 truncate">{pingUrl}</span>
         </div>
-        <button
-          onClick={onClose}
-          className="text-slate-400 hover:text-white text-xs font-mono transition-colors shrink-0 ml-4"
-        >
+        <button onClick={onClose} className="text-slate-400 hover:text-white text-xs font-mono transition-colors shrink-0 ml-4">
           ESC · Close
         </button>
       </div>
-      <iframe
-        src={snapshotUrl}
-        className="flex-1 w-full border-0 bg-white"
-        title="Error Snapshot"
-      />
+      <iframe src={snapshotUrl} className="flex-1 w-full border-0 bg-white" title="Error Snapshot" />
     </div>
   )
 }
@@ -77,13 +66,18 @@ export default function Home() {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [pings, setPings] = useState([])
-  const [pendingUrls, setPendingUrls] = useState([]) // newly added, not yet pinged
+  const [pendingUrls, setPendingUrls] = useState([])
   const [toast, setToast] = useState(null)
   const [countdown, setCountdown] = useState(60)
   const [pingsLoading, setPingsLoading] = useState(true)
   const [modal, setModal] = useState(null)
+  const [nextPage, setNextPage] = useState(null)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   const countdownRef = useRef(60)
+  const loaderRef = useRef(null)
+  const pingsRef = useRef([])
 
   const showToast = (type, message) => {
     setToast({ type, message })
@@ -91,27 +85,83 @@ export default function Home() {
     showToast._t = setTimeout(() => setToast(null), 3500)
   }
 
-  const fetchPings = useCallback(async () => {
+  // ─── Initial load — fetch first page ──────────────────────────────────────
+  const fetchFirstPage = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/url-pings/`)
+      setPingsLoading(true)
+      const res = await fetch(`${API}/api/url-pings/?page=1&page_size=${PAGE_SIZE}`)
       if (!res.ok) throw new Error()
       const data = await res.json()
-      setPings(Array.isArray(data) ? data : [])
-
-      // remove pending urls that now have pings
+      const results = data.results ?? []
+      setPings(results)
+      pingsRef.current = results
+      setNextPage(data.next)
+      setHasMore(data.next !== null)
       setPendingUrls(prev =>
-        prev.filter(u => !data.some(p => p.url_string === u.url))
+        prev.filter(u => !results.some(p => p.url_string === u.url))
       )
     } catch { }
-    finally {
-      setPingsLoading(false)
-    }
+    finally { setPingsLoading(false) }
   }, [])
 
+  // ─── Load next page (infinite scroll) ─────────────────────────────────────
+  const fetchNextPage = useCallback(async () => {
+    if (!nextPage || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const res = await fetch(nextPage)
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      const newItems = data.results ?? []
+      setPings(prev => {
+        const updated = [...prev, ...newItems]
+        pingsRef.current = updated
+        return updated
+      })
+      setNextPage(data.next)
+      setHasMore(data.next !== null)
+    } catch { }
+    finally { setLoadingMore(false) }
+  }, [nextPage, loadingMore])
+
+  // ─── Silent refresh every 60s — MERGE, don't replace ──────────────────────
+  // Only updates status of existing visible items + prepends brand new ones.
+  // This preserves your infinite scroll pages.
+  const silentRefresh = useCallback(async () => {
+    try {
+      const loadedCount = pingsRef.current.length
+      const res = await fetch(
+        `${API}/api/url-pings/?page=1&page_size=${Math.max(loadedCount, PAGE_SIZE)}`
+      )
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      const fresh = data.results ?? []
+
+      setPings(prev => {
+        const freshMap = new Map(fresh.map(f => [f.url_string, f]))
+
+        // Update all visible items with latest data
+        const updated = prev.map(ping => freshMap.get(ping.url_string) ?? ping)
+
+        // Prepend brand new URLs not yet in list
+        const existingUrls = new Set(prev.map(p => p.url_string))
+        const brandNew = fresh.filter(f => !existingUrls.has(f.url_string))
+
+        return [...brandNew, ...updated]
+      })
+
+      setPendingUrls(prev =>
+        prev.filter(u => !fresh.some(p => p.url_string === u.url))
+      )
+    } catch { }
+  }, [])
+
+  // ─── On mount: fetch first page ───────────────────────────────────────────
   useEffect(() => {
-    fetchPings()
+    fetchFirstPage()
   }, [])
 
+  // ─── Countdown + silent refresh every 60s ─────────────────────────────────
   useEffect(() => {
     const id = setInterval(() => {
       countdownRef.current -= 1
@@ -119,12 +169,25 @@ export default function Home() {
       if (countdownRef.current <= 0) {
         countdownRef.current = 60
         setCountdown(60)
-        fetchPings()
+        silentRefresh()
       }
     }, 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [silentRefresh])
 
+  // ─── IntersectionObserver for infinite scroll ──────────────────────────────
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && hasMore && !loadingMore) {
+        fetchNextPage()
+      }
+    }, { threshold: 0.1 })
+
+    if (loaderRef.current) observer.observe(loaderRef.current)
+    return () => observer.disconnect()
+  }, [hasMore, loadingMore, fetchNextPage])
+
+  // ─── Add URL ───────────────────────────────────────────────────────────────
   const handleAdd = async () => {
     if (!url.trim()) return
     setLoading(true)
@@ -141,7 +204,6 @@ export default function Home() {
       const newUrl = await res.json()
       setUrl('')
       showToast('success', 'URL added. Will be checked in next cycle.')
-      // add to pending urls immediately so user sees it
       setPendingUrls(prev => [newUrl, ...prev])
     } catch (e) {
       showToast('error', e.message)
@@ -150,6 +212,7 @@ export default function Home() {
     }
   }
 
+  // ─── View Error Modal ──────────────────────────────────────────────────────
   const handleViewError = async (pingId, pingUrl) => {
     try {
       const res = await fetch(`${API}/api/url-ping/${pingId}/error/`)
@@ -169,11 +232,7 @@ export default function Home() {
     <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
 
       {modal && (
-        <ErrorModal
-          snapshotUrl={modal.snapshotUrl}
-          pingUrl={modal.pingUrl}
-          onClose={() => setModal(null)}
-        />
+        <ErrorModal snapshotUrl={modal.snapshotUrl} pingUrl={modal.pingUrl} onClose={() => setModal(null)} />
       )}
 
       {/* Navbar */}
@@ -185,9 +244,7 @@ export default function Home() {
             </div>
             <span className="text-sm font-semibold text-slate-900 tracking-tight">ServerMonitor</span>
           </div>
-          <span className="text-[11px] font-mono text-slate-400">
-            next check in {countdown}s
-          </span>
+          <span className="text-[11px] font-mono text-slate-400">next check in {countdown}s</span>
         </div>
       </header>
 
@@ -240,9 +297,7 @@ export default function Home() {
         {/* URL List */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[11px] font-mono text-slate-400 uppercase tracking-widest">
-              Monitored URLs
-            </p>
+            <p className="text-[11px] font-mono text-slate-400 uppercase tracking-widest">Monitored URLs</p>
             <span className="text-[11px] font-mono text-slate-400 bg-white border border-slate-200 px-2.5 py-1 rounded-full">
               {totalCount} url{totalCount !== 1 ? 's' : ''}
             </span>
@@ -260,12 +315,9 @@ export default function Home() {
           ) : (
             <div className="space-y-2">
 
-              {/* pending urls - not yet pinged */}
+              {/* Pending URLs */}
               {pendingUrls.map(u => (
-                <div
-                  key={`pending-${u.id}`}
-                  className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200"
-                >
+                <div key={`pending-${u.id}`} className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{u.url}</p>
                     <p className="text-[11px] font-mono text-slate-400 mt-0.5">
@@ -276,17 +328,12 @@ export default function Home() {
                 </div>
               ))}
 
-              {/* pinged urls */}
+              {/* Pinged URLs */}
               {pings.map(ping => (
-                <div
-                  key={ping.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
-                >
+                <div key={ping.id} className="flex items-center justify-between gap-4 px-4 py-3.5 bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{ping.url_string}</p>
-                    <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                      checked {timeAgo(ping.time)}
-                    </p>
+                    <p className="text-[11px] font-mono text-slate-400 mt-0.5">checked {timeAgo(ping.time)}</p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <StatusBadge code={ping.status_code} />
@@ -301,6 +348,21 @@ export default function Home() {
                   </div>
                 </div>
               ))}
+
+              {/* Infinite scroll trigger */}
+              <div ref={loaderRef} className="py-2">
+                {loadingMore && (
+                  <div className="space-y-2">
+                    {[...Array(2)].map((_, i) => <SkeletonRow key={i} />)}
+                  </div>
+                )}
+                {!hasMore && pings.length > 0 && (
+                  <p className="text-center text-[11px] font-mono text-slate-300 py-2">
+                    all urls loaded
+                  </p>
+                )}
+              </div>
+
             </div>
           )}
         </div>
